@@ -1,0 +1,113 @@
+// складываем два массива
+
+#include <iostream>
+#include <random>
+#include <chrono>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+// работа с gpu
+__global__ void vectorAddCUDA(const float* A, const float* B, float* C, int N){
+    int idx = threadIdx.x + blockIdx.x * blockDim.x; // вычислили координаты
+    if(idx < N){
+        C[idx] = A[idx] + B[idx]; // сложение
+    }
+}
+
+
+// работа с cpu
+void vectorAddCPU(const float* A, const float* B, float* C, int N){
+    for (int i = 0; i < N; ++i) {
+        C[i] = A[i] + B[i];
+    }
+}
+
+
+// для рандомных чисел 
+float random(float a, float b)
+{
+    static mt19937 gen(random_device{}());
+    uniform_real_distribution<float> dis(a, b);
+    return dis(gen);
+}
+
+
+// основной код
+int main() {
+    using namespace std::chrono;
+    
+    int N = 1000000;
+    size_t size = N * sizeof(float);
+
+    
+    // выделяем память на хосте
+    float *h_a = new float[N];
+    float *h_b = new float[N]; 
+    float *h_c = new float[N]; 
+    float *h_cpu = new float[N]; // хранение данных для процессора 
+    
+    // инициализируем данные на хосте
+    for (int i = 0; i < N; ++i) {
+        h_a[i] = random(1, 2);
+        h_b[i] = random(4, 8);
+    }
+
+    // выделяем память на устройстве (gpu)
+    float *d_a; float *d_b; float *d_c;
+
+
+    // выделяем память на устройстве
+    cudaMalloc((void**)&d_a, size);
+    cudaMalloc((void**)&d_b, size);
+    cudaMalloc((void**)&d_c, size);
+
+    // копируем данные с хоста на устройство
+    cudaMemcpy(d_a, h_a, size, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, size, cudaMemcpyHostToDevice);
+
+    // считаем блоки и потоки, берем 8 варпов в 1 блоке
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+
+    // запускаем таймер
+    auto start1 = high_resolution_clock::now();
+
+    // запускаем ядро
+    vectorAddCUDA<<<blocksPerGrid, threadsPerBlock>>>(d_a, d_b, d_c, N);
+
+    // завершаем таймер
+    auto end1 = high_resolution_clock::now();
+    duration<double, std::milli> duration_gpu = end1 - start1;
+    //std::cout << duration_gpu.count() << " мс" << std::endl; // доли милесекунд
+
+    // копируем результат обратно на хост
+    cudaMemcpy(h_c, d_c, size, cudaMemcpyDeviceToHost);
+
+    // выводим первые 10 значений для проверки
+    std::cout << "Результат после выполнения CUDA ядра:\n";
+    for (int i = 0; i < 10; ++i) {
+        std::cout << h_a[i] << " + " << h_b[i] << " = " << h_c[i] << std::endl;
+    }
+    std::cout << std::endl;
+
+    // теперь последовательная обратока на хосте, для сравненения
+    auto start2 = high_resolution_clock::now();
+    vectorAddCPU(h_a, h_b, h_c, N);
+    auto end2 = high_resolution_clock::now();
+    duration<double, std::milli> duration_cpu = end2 - start2;
+    
+    // вывод временр
+    std::cout << duration_gpu.count() << "мс, обработка на gpu" << std::endl;
+    std::cout << duration_cpu.count() << "мс, обработка на cpu" << std::endl;
+    std::cout << duration_cpu.count()/duration_gpu.count() << " во сколько раз gpu быстрее cpu" << std::endl;
+    // Освобождаем ресурсы
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+    delete[] h_a;
+    delete[] h_b;
+    delete[] h_c;
+
+    return 0;
+}
