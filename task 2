@@ -1,0 +1,142 @@
+// увеличение яркости
+
+#include <iostream>
+#include <random>
+#include <chrono>
+#include <cuda_runtime.h>
+
+using namespace std;
+
+// работа с gpu
+__global__ void increaseBrightness(unsigned char* input, unsigned char* output, int width, int height, int delta) {
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+    if (x < width && y < height) {
+        int idx = y * width + x;
+
+        if(input[idx] + delta >= 255){
+            output[idx] = 255;
+        } else{
+            output[idx] = input[idx] + delta;
+        }
+    }
+}
+
+
+// работа с cpu
+void increaseBrightnessCPU(unsigned char* input, unsigned char* output, int width, int height, int delta){
+    for (int i = 0; i < width*height; ++i) {
+        if(input[i] + delta >= 255){
+            output[i] = 255;
+        } else{
+            output[i] = input[i] + delta;
+        }
+    }
+}
+
+
+// проверка на корретность работы обоих способов
+void check(unsigned char* h_cpu, unsigned char* h_output){
+    bool flag = true;
+
+    for (int i = 0; i < 10; ++i) {
+        if(h_cpu[i] != h_output[i]){
+            flag = false;
+        }
+    }
+    
+    if (flag){
+        cout << "Оба способа верны" << endl;
+    } else {
+        cout << "Все сломалось" << endl;
+    }
+}
+
+
+// для рандомных чисел 
+unsigned char random(unsigned char a, unsigned char b) {
+    static mt19937 gen(random_device{}());
+    uniform_int_distribution<int> dis(a, b); // работаем через int
+    return static_cast<unsigned char>(dis(gen)); // явно приводим к uchar
+}
+
+
+int main() {
+    using namespace std::chrono;
+
+    int width = 1024;
+    int height = 1024;
+    size_t size = width * height * sizeof(unsigned char);
+
+    // выделение памяти на хосте
+    unsigned char* h_data = (unsigned char*)malloc(size); 
+    unsigned char* h_output = (unsigned char*)malloc(size);
+    unsigned char* h_cpu = (unsigned char*)malloc(size);
+
+    // инициализация входных данных
+    for (int i = 0; i < width * height; ++i) {
+        h_data[i] = random(0, 255);
+    }
+
+    // выделение памяти на устройстве
+    unsigned char *d_data;
+    unsigned char *d_output;
+    cudaMalloc((void**)&d_data, size);
+    cudaMalloc((void**)&d_output, size);
+
+    // копирование данных на устройство
+    cudaMemcpy(d_data, h_data, size, cudaMemcpyHostToDevice);
+
+    // настройка сетки и блоков
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+
+    // засекаем время
+    auto start1 = high_resolution_clock::now();
+
+    // запуск ядра
+    increaseBrightness<<<grid, block>>>(d_data, d_output, width, height, 50);
+    cudaDeviceSynchronize(); // ждем, чтобы все потоки завершились, на всякий случай
+
+    // засекли
+    auto end1 = high_resolution_clock::now();
+    duration<double, std::milli> duration_gpu = end1 - start1;
+
+    // копирование результата обратно на хост
+    cudaMemcpy(h_output, d_output, size, cudaMemcpyDeviceToHost);
+
+    // вывод первых 10 результатов, через static_cast приводим к типу int
+    // делаем это для отображения данных в консоли, иначе символы всякие появляются  
+    for (int i = 0; i < 10; ++i) {
+        cout << static_cast<int>(h_data[i]) << " -> " << static_cast<int>(h_output[i]) << endl;
+    }
+
+    cout << endl;
+
+    // теперь последовательная обратока на хосте, для сравненения
+    auto start2 = high_resolution_clock::now();
+    increaseBrightnessCPU(h_data, h_cpu, width, height, 50);
+    auto end2 = high_resolution_clock::now();
+    duration<double, std::milli> duration_cpu = end2 - start2;
+    
+
+    // проверка корректности
+    check(h_cpu, h_output);
+
+
+    // вывод временр
+    std::cout << duration_gpu.count() << "мс, обработка на gpu" << std::endl;
+    std::cout << duration_cpu.count() << "мс, обработка на cpu" << std::endl;
+    std::cout << duration_cpu.count()/duration_gpu.count() << " во сколько раз gpu быстрее cpu" << std::endl;
+   
+
+    // Очистка
+    cudaFree(d_data);
+    cudaFree(d_output);
+    delete[] h_data;
+    delete[] h_output;
+    delete[] h_cpu;
+
+    return 0;
+}
