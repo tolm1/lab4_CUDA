@@ -24,6 +24,24 @@ void vectorAddCPU(const float* A, const float* B, float* C, int N){
 }
 
 
+// проверка на корретность работы обоих способов
+void check(const float* h_cpu, const float* h_output){
+    bool flag = true;
+
+    for (int i = 0; i < 10; ++i) {
+        if(h_cpu[i] != h_output[i]){
+            flag = false;
+        }
+    }
+    
+    if (flag){
+        cout << "Оба способа верны" << endl;
+    } else {
+        cout << "Все сломалось" << endl;
+    }
+}
+
+
 // для рандомных чисел 
 float random(float a, float b)
 {
@@ -75,11 +93,11 @@ int main() {
 
     // запускаем ядро
     vectorAddCUDA<<<blocksPerGrid, threadsPerBlock>>>(d_a, d_b, d_c, N);
+    cudaDeviceSynchronize(); // ждем, чтобы все потоки завершились, на всякий случай
 
     // завершаем таймер
     auto end1 = high_resolution_clock::now();
     duration<double, std::milli> duration_gpu = end1 - start1;
-    //std::cout << duration_gpu.count() << " мс" << std::endl; // доли милесекунд
 
     // копируем результат обратно на хост
     cudaMemcpy(h_c, d_c, size, cudaMemcpyDeviceToHost);
@@ -93,10 +111,13 @@ int main() {
 
     // теперь последовательная обратока на хосте, для сравненения
     auto start2 = high_resolution_clock::now();
-    vectorAddCPU(h_a, h_b, h_c, N);
+    vectorAddCPU(h_a, h_b, h_cpu, N);
     auto end2 = high_resolution_clock::now();
     duration<double, std::milli> duration_cpu = end2 - start2;
     
+    // проверка корректности
+    check(h_cpu, h_c);
+
     // вывод временр
     std::cout << duration_gpu.count() << "мс, обработка на gpu" << std::endl;
     std::cout << duration_cpu.count() << "мс, обработка на cpu" << std::endl;
@@ -108,6 +129,7 @@ int main() {
     delete[] h_a;
     delete[] h_b;
     delete[] h_c;
+    delete[] h_cpu;
 
     return 0;
 }
